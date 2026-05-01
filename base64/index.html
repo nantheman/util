@@ -1,1 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Base64 - utils</title>
+  <style>
+    body { 
+      font-family: system-ui, sans-serif; 
+      max-width: 800px; 
+      margin: 40px auto; 
+      padding: 20px; 
+      background: #0f0f0f; 
+      color: #eee; 
+    }
+    textarea { 
+      width: 100%; 
+      height: 160px; 
+      font-family: monospace; 
+      padding: 16px; 
+      border-radius: 8px; 
+      background: #1f1f1f; 
+      border: none; 
+      color: #fff; 
+      resize: vertical;
+    }
+    button { 
+      padding: 10px 20px; 
+      margin: 6px 4px; 
+      font-size: 15px; 
+      border: none; 
+      border-radius: 6px; 
+      cursor: pointer; 
+    }
+    .encode { background: #0a84ff; color: white; }
+    .decode { background: #30d158; color: black; }
+    .view { background: #ff9f0a; color: black; font-weight: bold; }
+    .nav { margin-bottom: 30px; }
+    .result {
+      margin-top: 24px;
+      padding: 16px;
+      background: #1f1f1f;
+      border-radius: 8px;
+    }
+    .result-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .result-buttons {
+      margin-bottom: 12px;
+    }
+    .output {
+      white-space: pre-wrap;
+      font-family: monospace;
+      background: #2a2a2a;
+      padding: 14px;
+      border-radius: 6px;
+      min-height: 100px;
+      margin-bottom: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="nav">
+    <a href="../" style="color:#aaa; text-decoration:none;">← Back to utils</a>
+  </div>
+  
+  <h1>🔐 Base64 Encode / Decode</h1>
+  
+  <textarea id="input" placeholder="Paste your text or Base64 here..."></textarea>
+  
+  <div>
+    <button class="encode" onclick="encode()">Encode →</button>
+    <button class="decode" onclick="decode()">Decode ←</button>
+    <button onclick="clearAll()">Clear</button>
+  </div>
 
+  <div class="result" id="resultArea" style="display:none;">
+    <div class="result-header">
+      <strong>Result:</strong>
+      <div class="result-buttons">
+        <button onclick="copyResult()">📋 Copy Result</button>
+        <button class="view" onclick="viewDecodedResult()">👁️ View Decoded Result</button>
+      </div>
+    </div>
+    
+    <div class="output" id="output"></div>
+    
+    <!-- Bottom buttons (for convenience) -->
+    <button onclick="copyResult()">📋 Copy Result</button>
+    <button class="view" onclick="viewDecodedResult()">👁️ View Decoded Result</button>
+  </div>
+
+  <script>
+    let lastDecoded = "";
+
+    function encode() {
+      const input = document.getElementById('input').value;
+      if (!input) return;
+      const encoded = btoa(unescape(encodeURIComponent(input)));
+      document.getElementById('output').textContent = encoded;
+      document.getElementById('resultArea').style.display = 'block';
+      lastDecoded = "";
+    }
+
+    function decode() {
+      const input = document.getElementById('input').value.trim();
+      if (!input) return;
+      try {
+        lastDecoded = decodeURIComponent(escape(atob(input)));
+        document.getElementById('output').textContent = lastDecoded;
+        document.getElementById('resultArea').style.display = 'block';
+      } catch (e) {
+        document.getElementById('output').innerHTML = '<span style="color:#ff453a">Invalid Base64 string</span>';
+        document.getElementById('resultArea').style.display = 'block';
+        lastDecoded = "";
+      }
+    }
+
+    function viewDecodedResult() {
+      if (!lastDecoded) return;
+
+      const trimmed = lastDecoded.trim();
+      
+      if (trimmed.startsWith('<html') || trimmed.startsWith('<!DOCTYPE') || 
+          (trimmed.includes('<head') && trimmed.includes('<body'))) {
+        const blob = new Blob([lastDecoded], { type: 'text/html' });
+        window.open(URL.createObjectURL(blob), '_blank');
+      } 
+      else if (trimmed.startsWith('<')) {
+        const pretty = prettyPrintXML(lastDecoded);
+        const html = `<!DOCTYPE html><html><head><title>Pretty XML</title>
+          <style>body{font-family:monospace;white-space:pre-wrap;padding:20px;background:#1f1f1f;color:#0f0;}</style></head>
+          <body>${pretty}</body></html>`;
+        const blob = new Blob([html], { type: 'text/html' });
+        window.open(URL.createObjectURL(blob), '_blank');
+      } 
+      else if (trimmed.includes(',') && trimmed.split('\n').some(l => l.split(',').length > 2)) {
+        const blob = new Blob([lastDecoded], { type: 'text/csv' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'decoded.csv';
+        a.click();
+      } 
+      else {
+        const blob = new Blob([lastDecoded], { type: 'text/plain' });
+        window.open(URL.createObjectURL(blob), '_blank');
+      }
+    }
+
+    function prettyPrintXML(xml) {
+      let formatted = '';
+      const lines = xml.split('><');
+      for (let i = 0; i < lines.length; i++) {
+        if (i > 0) formatted += '>\n';
+        formatted += lines[i];
+      }
+      return formatted.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function copyResult() {
+      const text = document.getElementById('output').textContent;
+      if (text) {
+        navigator.clipboard.writeText(text).then(() => {
+          const btns = document.querySelectorAll('button[onclick="copyResult()"]');
+          btns.forEach(btn => {
+            const original = btn.textContent;
+            btn.textContent = '✅ Copied!';
+            setTimeout(() => btn.textContent = original, 2000);
+          });
+        });
+      }
+    }
+
+    function clearAll() {
+      document.getElementById('input').value = '';
+      document.getElementById('resultArea').style.display = 'none';
+      lastDecoded = "";
+    }
+  </script>
+</body>
+</html>
