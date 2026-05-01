@@ -1,1 +1,179 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Transform Sabrix XML</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; }
+    .drop-zone { transition: all 0.3s; }
+    .drop-zone.dragover { background-color: #1e3a8a; border-color: #60a5fa; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+  <div class="max-w-2xl mx-auto p-8">
+    <div class="text-center mb-10">
+      <h1 class="text-4xl font-bold mb-2">Transform Sabrix XML</h1>
+      <p class="text-gray-400">Clean, Rename & Redact your Sabrix XML files</p>
+    </div>
 
+    <!-- Instructions -->
+    <div class="bg-gray-900 border border-gray-700 rounded-2xl p-6 mb-8">
+      <p class="font-medium mb-3">How to use:</p>
+      <ol class="list-decimal list-inside space-y-2 text-gray-300">
+        <li>In <strong>SQL Developer</strong>, select your records with the XML stored in a CLOB</li>
+        <li>Use <strong>Export</strong> → Save as <strong>.ldr</strong> files using the Multiple files option</li>
+        <li>Zip all the .ldr files and drop the ZIP here</li>
+      </ol>
+    </div>
+
+    <div id="dropZone" class="drop-zone border-2 border-dashed border-gray-700 rounded-2xl p-12 text-center cursor-pointer hover:border-blue-500">
+      <input type="file" id="fileInput" accept=".zip" class="hidden"/>
+      <div class="mb-4 text-6xl">📦</div>
+      <p class="text-xl mb-2">Drop your ZIP file here</p>
+      <p class="text-gray-500">or click to browse</p>
+    </div>
+
+    <div id="status" class="mt-6 hidden">
+      <div class="bg-gray-900 rounded-xl p-6">
+        <div id="progress" class="text-sm text-gray-400 mb-4"></div>
+        <div id="log" class="max-h-96 overflow-auto text-sm font-mono space-y-1"></div>
+      </div>
+    </div>
+
+    <div id="downloadSection" class="hidden mt-6 text-center">
+      <button onclick="downloadFixedZip()" 
+              class="bg-green-600 hover:bg-green-500 px-8 py-4 rounded-xl text-lg font-semibold flex items-center gap-3 mx-auto">
+        ⬇️ Download Transformed ZIP
+      </button>
+    </div>
+
+    <!-- Features -->
+    <div class="mt-10 text-sm text-gray-400">
+      <p class="font-medium mb-2">This app:</p>
+      <ul class="list-disc list-inside space-y-1">
+        <li>Reads <strong>.ldr</strong> files that are inside ZIP</li>
+        <li>Pretty-prints the XML</li>
+        <li>Renames to <code>invoicenumber.in.xml</code> / <code>invoicenumber.ou.xml</code></li>
+        <li><strong>Redacts only in .in.xml files:</strong>
+          <ul class="list-disc list-inside ml-6 mt-1">
+            <li><code>USERNAME</code> → first 3 characters + <code>******</code></li>
+            <li><code>PASSWORD</code> → <code>REDACTED</code></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    let fixedZip = null;
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const status = document.getElementById('status');
+    const logEl = document.getElementById('log');
+    const progressEl = document.getElementById('progress');
+    const downloadSection = document.getElementById('downloadSection');
+
+    function log(msg, type = 'info') {
+      const colors = { info: 'text-gray-300', success: 'text-green-400', error: 'text-red-400', warn: 'text-yellow-400' };
+      logEl.innerHTML += `<div class="${colors[type]}">• ${msg}</div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function redactContent(content) {
+      let text = content;
+      text = text.replace(/<USERNAME>([^<]*)<\/USERNAME>/gi, (match, value) => {
+        const v = (value || '').trim();
+        const first3 = v.length >= 3 ? v.substring(0, 3) : v;
+        return `<USERNAME>${first3}******</USERNAME>`;
+      });
+      text = text.replace(/<PASSWORD>([^<]*)<\/PASSWORD>/gi, '<PASSWORD>REDACTED</PASSWORD>');
+      return text;
+    }
+
+    function prettyPrintXML(str) {
+      return str
+        .replace(/></g, '>\n<')
+        .replace(/\n\s*\n/g, '\n')
+        .trim();
+    }
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      handleFile(e.dataTransfer.files[0]);
+    });
+
+    fileInput.addEventListener('change', e => {
+      if (e.target.files[0]) handleFile(e.target.files[0]);
+    });
+
+    async function handleFile(file) {
+      logEl.innerHTML = '';
+      status.classList.remove('hidden');
+      downloadSection.classList.add('hidden');
+      fixedZip = new JSZip();
+
+      log(`Processing ${file.name}`, 'info');
+
+      try {
+        const zip = await JSZip.loadAsync(file);
+        let count = 0;
+
+        for (const [filename, entry] of Object.entries(zip.files)) {
+          if (!filename.toLowerCase().endsWith('.ldr') || entry.dir) continue;
+
+          log(`Processing ${filename}`);
+
+          let content = await entry.async('string');
+
+          const hasIndata = content.includes('INDATA') || content.toUpperCase().includes('INDATA');
+
+          const invMatch = content.match(/<INVOICE_NUMBER>([^<]+)<\/INVOICE_NUMBER>/i);
+          const invoice = invMatch ? invMatch[1].trim() : 'unknown';
+          const safeInv = invoice.replace(/[^a-zA-Z0-9._-]/g, '').toLowerCase();
+
+          const newName = `${safeInv}.${hasIndata ? 'in' : 'ou'}.xml`;
+
+          if (hasIndata) {
+            content = redactContent(content);
+            log(`🔒 Redacted USERNAME & PASSWORD`, 'success');
+          }
+
+          const pretty = prettyPrintXML(content);
+          fixedZip.file(newName, pretty);
+
+          log(`✅ Saved as ${newName}`, 'success');
+          count++;
+        }
+
+        if (count > 0) {
+          log(`🎉 Done! ${count} file(s) processed`, 'success');
+          downloadSection.classList.remove('hidden');
+        } else {
+          log('⚠️ No .ldr files found', 'warn');
+        }
+      } catch (err) {
+        log(`Error: ${err.message}`, 'error');
+        console.error(err);
+      }
+    }
+
+    window.downloadFixedZip = async () => {
+      const blob = await fixedZip.generateAsync({type: "blob"});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = "transformed_sabrix_xml.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+  </script>
+</body>
+</html>
