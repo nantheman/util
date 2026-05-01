@@ -1,1 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SQLDoc - SQL Documentation Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+</head>
+<body class="bg-gray-50">
+  <div class="max-w-6xl mx-auto p-8">
+    <h1 class="text-4xl font-bold text-blue-900 mb-2">SQLDoc</h1>
+    <p class="text-gray-600 mb-8">Upload Oracle SQL → Auto Generate Excel Documentation</p>
 
+    <div class="border-2 border-dashed border-gray-300 rounded-2xl p-16 text-center bg-white">
+      <input type="file" id="sqlFile" accept=".sql" class="hidden" onchange="handleFile(this)">
+      <button onclick="document.getElementById('sqlFile').click()" 
+              class="bg-blue-600 hover:bg-blue-700 text-white px-10 py-5 rounded-xl text-xl font-medium">
+        <i class="fas fa-upload mr-3"></i> Upload SQL File
+      </button>
+      <p class="text-sm text-gray-500 mt-6">Dynamic Parser • Fields + Filters only</p>
+    </div>
+
+    <div id="result" class="hidden mt-10">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-2xl font-semibold" id="filename"></h2>
+        <button onclick="downloadExcel()" 
+                class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-lg flex items-center gap-2">
+          <i class="fas fa-download"></i> Download Excel
+        </button>
+      </div>
+      <div class="bg-white rounded-xl shadow p-6 overflow-auto max-h-[70vh]" id="preview"></div>
+    </div>
+  </div>
+
+  <script>
+    let currentData = {};
+
+    function handleFile(input) {
+      const file = input.files[0];
+      if (!file) return;
+      document.getElementById('filename').textContent = file.name;
+      const reader = new FileReader();
+      reader.onload = e => {
+        parseSQL(e.target.result, file.name);
+        document.getElementById('result').classList.remove('hidden');
+      };
+      reader.readAsText(file);
+    }
+
+    function parseSQL(sql, filename) {
+      // Fields
+      const fields = [];
+      const selectMatch = sql.match(/SELECT\s+([\s\S]+?)\s+FROM/i);
+      if (selectMatch) {
+        selectMatch[1].split(',').forEach(col => {
+          const cleaned = col.trim().replace(/\n/g, ' ');
+          let alias = cleaned.split(/\s+AS\s+|\s+/i).pop().replace(/["'`]/g, '').trim();
+          const tableMatch = cleaned.match(/(\w+)\./i);
+          fields.push([alias || 'Unnamed_Column', tableMatch ? tableMatch[1] : '', '']);
+        });
+      }
+
+      // Filters only (no Joins)
+      const filters = [];
+      const whereMatch = sql.match(/WHERE\s+([\s\S]+)/i);
+      if (whereMatch) {
+        const wherePart = whereMatch[1];
+        const conditions = wherePart.split(/\s+(?:AND|OR)\s+/i);
+        conditions.forEach(cond => {
+          const trimmed = cond.trim();
+          if (!trimmed) return;
+          let table = '', column = '';
+          const colMatch = trimmed.match(/(\w+)\.(\w+)/i);
+          if (colMatch) {
+            table = colMatch[1];
+            column = colMatch[2];
+          }
+          filters.push(['Filter', table, column, trimmed, '']);
+        });
+      }
+
+      currentData = { fields, filters, filename, sql };
+      renderPreview();
+    }
+
+    function renderPreview() {
+      let html = `<h3 class="font-bold text-lg mb-4">📋 Fields (${currentData.fields.length})</h3>`;
+      html += `<table class="w-full border-collapse mb-8"><thead class="bg-blue-900 text-white"><tr><th class="p-3 text-left">Column Name</th><th class="p-3 text-left">Table</th><th class="p-3 text-left">Comment</th></tr></thead><tbody>`;
+      currentData.fields.forEach(r => {
+        html += `<tr class="border-b"><td class="p-3">${r[0]}</td><td class="p-3">${r[1]}</td><td class="p-3 text-gray-600">${r[2]}</td></tr>`;
+      });
+      html += `</tbody></table>`;
+
+      html += `<h3 class="font-bold text-lg mb-4">🔍 Filters (${currentData.filters.length})</h3>`;
+      html += `<table class="w-full border-collapse"><thead class="bg-blue-900 text-white"><tr><th class="p-3">Type</th><th class="p-3">Table</th><th class="p-3">Column</th><th class="p-3">Condition</th><th class="p-3">Comment</th></tr></thead><tbody>`;
+      currentData.filters.forEach(r => {
+        html += `<tr class="border-b"><td class="p-3">${r[0]}</td><td class="p-3">${r[1]}</td><td class="p-3">${r[2]}</td><td class="p-3">${r[3]}</td><td class="p-3">${r[4]}</td></tr>`;
+      });
+      html += `</tbody></table>`;
+
+      document.getElementById('preview').innerHTML = html;
+    }
+
+    function downloadExcel() {
+      const wb = XLSX.utils.book_new();
+
+      // Fields Sheet
+      XLSX.utils.book_append_sheet(wb, 
+        XLSX.utils.aoa_to_sheet([["Column Name", "Table Name", "Comment / Business Meaning"], ...currentData.fields]), 
+        "Fields");
+
+      // Filters Sheet
+      XLSX.utils.book_append_sheet(wb, 
+        XLSX.utils.aoa_to_sheet([["Type", "Table", "Column", "Condition", "Comment"], ...currentData.filters]), 
+        "Filters");
+
+      // Original SQL Sheet
+      XLSX.utils.book_append_sheet(wb, 
+        XLSX.utils.aoa_to_sheet([["Full SQL Query"], [currentData.sql]]), 
+        "Original SQL");
+
+      const outputName = currentData.filename.replace('.sql', '') + '_Documentation.xlsx';
+      XLSX.writeFile(wb, outputName);
+    }
+  </script>
+</body>
+</html>
